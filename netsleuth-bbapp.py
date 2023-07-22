@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 
-import request;
+from datetime import datetime
+import requests;
+import json;
 import time
 from ipaddress import ip_address
 from scapy.all import *
@@ -10,12 +12,33 @@ from pyp0f.database import DATABASE
 from collections import namedtuple
 from ndpi import NDPI, NDPIFlow, ffi
 
+#nDPI config
 FLOW_KEY = "{} {}:{} <-> {}:{}"
 FLOW_STR = "   {} {} [protocol:{}] [category:{}] [confidence:{}] [{} packets/{} bytes]"
 PROTOCOL_UNKNWON = 0
 flow_cache = {}  # We store the flows in a dictionary.
 flow_count = 0  # Flow counter
+class Flow(object):
+    __slots__ = ("index",
+                 "pkts",
+                 "bytes",
+                 "detected_protocol",
+                 "ndpi_flow")
 
+    def __init__(self):
+        self.pkts = 0
+        self.detected_protocol = None
+        self.bytes = 0
+        self.ndpi_flow = None
+
+
+
+#API Config
+BASE_API_URL = "https://lionfish-app-4a33x.ondigitalocean.app/"
+API_EMAIL = "eric.hester@umbrella.tech"
+API_PASSWORD = "Olsa-Lamp-Fire5"
+
+#LOAD PYP0F DB  
 DATABASE.load()
 
 #read in mac vendors file for later lookups
@@ -39,18 +62,78 @@ with open('oui.txt', 'r') as file:
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-class Flow(object):
-    __slots__ = ("index",
-                 "pkts",
-                 "bytes",
-                 "detected_protocol",
-                 "ndpi_flow")
 
-    def __init__(self):
-        self.pkts = 0
-        self.detected_protocol = None
-        self.bytes = 0
-        self.ndpi_flow = None
+def authenticate():
+    url = f"{BASE_API_URL}/auth/login"
+    credentials = {
+        "email": API_USERNAME,
+        "password": API_PASSWORD
+    }
+    response = requests.post(url, data=json.dumps(credentials))
+    response.raise_for_status()  # Raise an exception if the authentication fails
+    token = response.json().get('token')  # Get the JWT token from the response
+    return token
+
+def find_obj_by_key(endpoint, object_key, object_value):
+    # Authenticate and get the JWT token
+    token = authenticate()
+
+    # Define the URL of your API
+    url = f"{BASE_API_URL}/{endpoint}"
+
+    # Create the headers for your request
+    headers = {
+        "Authorization": f"Bearer {token}",  # Use the token in the Authorization header
+        "Content-Type": "application/json"
+    }
+
+    # Send a GET request to the API to check if the object exists
+    find_url = f"{url}/find?{object_key}={object_value}"
+    response = requests.get(find_url, headers=headers)
+
+    if response.status_code == 200:
+        # The object exists, return its ID
+        return response.json()
+    elif response.status_code == 404:
+        # The object does not exist, return None
+        return None
+    else:
+        # An unexpected status code was returned
+        response.raise_for_status()
+
+def send_to_api(endpoint, id, data):
+    # Authenticate and get the JWT token
+    token = authenticate()
+
+    # Define the URL of your API
+    url = f"{BASE_API_URL}/{endpoint}"
+
+    # Create the headers for your request
+    headers = {
+        "Authorization": f"Bearer {token}",  # Use the token in the Authorization header
+        "Content-Type": "application/json"
+    }
+
+    try:
+        if id is not None:
+            # The object exists, so update it with a PUT request
+            response = requests.put(f"{url}/{id}", data=json.dumps(data), headers=headers)
+        else:
+            # The object does not exist, so create it with a POST request
+            response = requests.post(url, data=json.dumps(data), headers=headers)
+
+    except requests.exceptions.HTTPError as errh:
+        print ("HTTP Error:", errh)
+    except requests.exceptions.ConnectionError as errc:
+        print ("Error Connecting:", errc)
+    except requests.exceptions.Timeout as errt:
+        print ("Timeout Error:", errt)
+    except requests.exceptions.RequestException as err:
+        print ("Something went wrong with the request:", err)
+
+    else:
+        # If the request was successful, print the status code
+        print(response.status_code)
 
 
 #timestamps for dampening alerts later in code
@@ -70,8 +153,11 @@ def alert(ip,event_id,event):
     last_alert_timestamps[key] = alert_time 
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     #log.info("[{}] Netsleuth Alert: [{}]: {}".format(timestamp, event_id, event))
-    sql.execute('INSERT INTO alerts (timestamp, host, event_id, event) VALUES (?, ?, ?, ?)', (timestamp, ip, event_id, event))
-    conn.commit()    
+    data = {
+        "eventId": event_id,
+        "event": event 
+    }
+    save_object('alert',data)
 
 def is_rfc(ip):
     try:
@@ -87,11 +173,11 @@ found = {}
 
 def update_host(direction,type,ip,mac,vlan):
 
-    current_time = int(time.time())
-
     try:
+
         hostname = socket.gethostbyaddr(ip)[0]
         hostname = hostname.split(".", 1)[0]
+
     except socket.herror:
         hostname = "Unknown"
 
@@ -101,34 +187,27 @@ def update_host(direction,type,ip,mac,vlan):
         vendor = vendor_data.get(mac_prefix, "Unknown")
         if not mac in found:
             found[mac]=1
-            sql.execute('''
-                INSERT OR IGNORE INTO hosts (ip, mac, vendor, vlan_id, hostname, status, target_count_last_reset, total_arp_last_reset)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (ip, mac, vendor, vlan, hostname, 1, current_time, current_time))
-            if sql.rowcount > 0:
-                if type == 'arp': alert(ip,1001,"[ARP] new host found: {}".format(ip))
-                if type == 'ip': alert(ip,1002,"[IP] new host found: {}".format(ip))
-                sql.execute('''
-                    UPDATE vlans
-                    SET lowest_ip = MIN(COALESCE(lowest_ip, ?), ?),
-                    highest_ip = MAX(COALESCE(highest_ip, ?), ?)
-                    WHERE id = ?
-                ''', (ip, ip, ip, ip, vlan))   
-                conn.commit()
+            location_id = find_obj_by_key('location','name',LOCATION).get('_id')
+            vendor_id = find_obj_by_key('vendor','name',vendor).get('_id')
+            vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
+            data = {
+                "ipAddress": ip,
+                "macAddress": mac,
+                "hostName": hostname,
+                "location": location_id,
+                "vendor": vendor_id,
+                "vlan": vlan_id
+                "lastSeen": datetime.now
+            }
+            hardware_id = find_obj_by_key('hardware','macAddress',mac).get('_id')
+            send_to_api('hardware', hardware_id, data)
+            data = {
+                "name": vlan,
+            }
+            send_to_api('vlan', vlan_id, data)
  
-    sql.execute('''
-        UPDATE hosts
-        SET last_seen = datetime('now') where ip = ?
-        ''', (ip,))
-    conn.commit()
-
     if direction == 'src' and type == 'arp':
-        sql.execute('''
-            SELECT total_arp,total_arp_last_reset 
-            FROM hosts 
-            WHERE ip = ?
-        ''', (ip,))
-
+    
         result=sql.fetchone()
         if result is not None: 
             total_arp = result[0]
@@ -140,19 +219,9 @@ def update_host(direction,type,ip,mac,vlan):
                 total_arp_last_reset = current_time
 
             total_arp = total_arp + 1
-            sql.execute('''
-                UPDATE hosts
-                SET total_arp = ?, total_arp_last_reset = ?
-                WHERE ip = ?
-            ''', (total_arp, total_arp_last_reset, ip))
-
+    
     if direction == 'dest' and type == 'arp':
-        sql.execute('''
-            SELECT target_count,target_count_last_reset 
-            FROM hosts 
-            WHERE ip = ?
-        ''', (ip,))
-
+    
         result = sql.fetchone()
 
         if result is not None: 
@@ -167,28 +236,20 @@ def update_host(direction,type,ip,mac,vlan):
 
             target_count = target_count + 1
 
-            sql.execute('''
-                UPDATE hosts
-                SET target_count = ?, target_count_last_reset = ?
-                WHERE ip = ?
-            ''', (target_count, target_count_last_reset, ip))
-
+    
 def handle_packet(packet):
-    vlanid = 0
+    vlan = 0
     srcip = 0
     dstip = 0
-    current_time = int(time.time())
+    mac = packet[Ether].src
 
     if packet.haslayer(Dot1Q):
-        vlanid = packet[Dot1Q].vlan
-
-    sql.execute('''
-       INSERT OR IGNORE INTO vlans (id)
-       VALUES (?)
-    ''', (vlanid,))
-    if sql.rowcount > 0:
-        alert(vlanid,1003,"[VLAN] new VLAN found: {}".format(vlanid))
-    conn.commit()
+        vlan = packet[Dot1Q].vlan
+        vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
+        data = {
+           "name": vlan,
+        }
+        send_to_api('vlan', vlan_id, data)
 
     if packet.haslayer(ARP) and packet[ARP].op == 2:
         if packet[Ether].src != packet[ARP].hwsrc:
@@ -196,12 +257,11 @@ def handle_packet(packet):
             alert(srcip,3010,"[ARP] Spoofed ARP packet detected for {}".format(srcip))
 
     if packet.haslayer(ARP) and packet[ARP].op == 1:
-        srcmac = packet[Ether].src
         srcip = packet[ARP].psrc
         dstip = packet[ARP].pdst
 
-        if is_rfc(srcip): update_host('src','arp',srcip,srcmac,vlanid)
-        if is_rfc(dstip): update_host('dest','arp',dstip,'',vlanid)
+        if is_rfc(srcip): update_host('src','arp',srcip,mac,vlan)
+        if is_rfc(dstip): update_host('dest','arp',dstip,'',vlan)
 
 
     elif packet.haslayer(DHCP) and packet[DHCP].options[0][1] == 2:
@@ -235,32 +295,44 @@ def handle_packet(packet):
                     domain_name = option_value.decode()
 
         if srcip and hostname:
-            sql.execute('''
-                UPDATE hosts
-                SET hostname = ?
-                WHERE ip = ? and hostname = 'Unknown'
-            ''',(hostname,srcip))
+            data = {
+                "ipAddress": ip,
+                "macAddress": mac,
+                "hostName": hostname,
+                "lastSeen": datetime.now
+            }
+            hardware_id = find_obj_by_key('hardware','macAddress',mac).get('_id')
+            send_to_api('hardware', hardware_id, data)
+
             alert(srcip,1006,'[DHCP] discovered new hostname '.format(srcip,hostname))
 
         if router:
-            sql.execute('''
-                UPDATE hosts
-                SET type = ?
-                WHERE ip = ?
-            ''',('router',router))
-            sql.execute('''
-                UPDATE vlans 
-                SET router = ?
-                WHERE id = ?
-            ''',(router,vlanid))
+            data = {
+                "ipAddress": ip,
+                "macAddress": mac,
+                "hostName": hostname,
+                "type": 'router'
+                "lastSeen": datetime.now
+            }
+            hardware_id = find_obj_by_key('hardware','macAddress',mac).get('_id')
+            send_to_api('hardware', hardware_id, data)
+            data = {
+                "name": vlan,
+                "ipGateway": router
+            }
+            vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
+            send_to_api('vlan', vlan_id, data)
+ 
             alert(srcip,1003,'[DHCP] discovered new router '.format(router))
 
         if subnet_mask:
-            sql.execute('''
-                UPDATE vlans 
-                SET mask = ?
-                WHERE id = ?
-            ''',(subnet_mask,vlanid))
+            # find network from subnet mask and ip
+            data = {
+                "name": vlan,
+                "ipSubnet": subnet
+            }
+            vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
+            send_to_api('vlan', vlan_id, data)
 
     elif packet.haslayer(DNS) and packet.haslayer(UDP):
         if packet[DNS].ancount >=1:
@@ -270,29 +342,38 @@ def handle_packet(packet):
             if packet[UDP].sport == 5353 and packet.haslayer(IP) and (packet[DNS].an.type == 1 or packet[DNS].an.type == 28):
                 hostname = packet[DNS].an.rrname.decode()
                 hostname = hostname.split(".", 1)[0]
-                sql.execute('''
-                    UPDATE hosts
-                    SET hostname = ?
-                    WHERE ip = ? and hostname = 'Unknown'
-                ''',(hostname,packet[IP].src))
+                data = {
+                    "ipAddress": packet[IP].src,
+                    "macAddress": mac,
+                    "hostName": hostname,
+                    "lastSeen": datetime.now
+                }
+                hardware_id = find_obj_by_key('hardware','ipAddress',packet[IP].src).get('_id')
+                send_to_api('hardware', hardware_id, data)
+
                 alert(srcip,1005,'[MDNS] discovered new hostname '.format(packet[IP].src,hostname))
             #find ipp printers
             if packet[UDP].sport == 5353 and packet.haslayer(IP) and packet[DNS].an.type == 16 and 'ipp' in packet[DNS].an.rrname.decode():
-                sql.execute('''
-                    UPDATE hosts
-                    SET type = ?
-                    WHERE ip = ?
-                ''',('printer',packet[IP].src))
-                alert(srcip,1004,'[MDNS] discovered new printer '.format(packet[IP].src))
+                data = {
+                    "ipAddress": packet[IP].src,
+                    "macAddress": mac,
+                    "type": 'printer',
+                    "lastSeen": datetime.now
+                }
+                hardware_id = find_obj_by_key('hardware','ipAddress',packet[IP].src).get('_id')
+                send_to_api('hardware', hardware_id, data)
             #find hidden iphones
             if packet[UDP].sport == 5353 and packet.haslayer(IP) and packet[DNS].an.type == 16 and 'rdlink' in packet[DNS].an.rrname.decode():
                 hostname = packet[DNS].an.rrname.decode()
                 hostname = hostname.split(".", 1)[0]
-                sql.execute('''
-                    UPDATE hosts
-                    SET hostname = ?
-                    WHERE ip = ? and hostname = 'Unknown'
-                ''',(hostname,packet[IP].src))
+                data = {
+                    "ipAddress": packet[IP].src,
+                    "macAddress": mac,
+                    "hostName": hostname,
+                    "lastSeen": datetime.now
+                }
+                hardware_id = find_obj_by_key('hardware','ipAddress',packet[IP].src).get('_id')
+                send_to_api('hardware', hardware_id, data)
                 alert(srcip,1005,'[MDNS] discovered new hostname '.format(packet[IP].src,hostname))
 
     elif packet.haslayer(IP):
@@ -357,6 +438,7 @@ def handle_packet(packet):
             if flow.detected_protocol.app_protocol == PROTOCOL_UNKNWON: 
                 flow.detected_protocol = nDPI.giveup(flow.ndpi_flow) 
 
+
             sql.execute('''
                 INSERT INTO flows (src, dst, srcport, dstport, protocol, category, count, bytes)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -370,11 +452,14 @@ def handle_packet(packet):
         if is_rfc(srcip) and packet.haslayer(TCP) and packet[TCP].flags.S:
             tcp_result=fingerprint_tcp(packet)
             if tcp_result.match is not None:
-                sql.execute('''
-                    UPDATE hosts
-                    SET os = ?
-                    WHERE ip = ?
-                ''',(tcp_result.match.record.label.name,srcip))
+                data = {
+                    "ipAddress": packet[IP].src,
+                    "macAddress": mac,
+                    "os": os,
+                    "lastSeen": datetime.now
+                }
+                hardware_id = find_obj_by_key('hardware','ipAddress',srcip.get('_id')
+                send_to_api('hardware', hardware_id, data)
                 alert(srcip,1005,'[IP] discovered os type using p0f'.format(srcip,tcp_result.match.record.label.name))
 
 
