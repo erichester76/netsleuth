@@ -118,12 +118,13 @@ def send_to_api(endpoint, id, data):
         if id is not None:
             # The object exists, so update it with a PUT request
             response = requests.put(f"{url}/{id}", data=json.dumps(data), headers=headers)
+            print("sending api call - "+endpoint+" "+json.dumps(data)) 
+            print(response.json())
             return response.json()
         else:
             # The object does not exist, so create it with a POST request
             response = requests.post(url, data=json.dumps(data), headers=headers)
             return response.json()
-
     except requests.exceptions.HTTPError as errh:
         print ("HTTP Error:", errh)
     except requests.exceptions.ConnectionError as errc:
@@ -132,7 +133,6 @@ def send_to_api(endpoint, id, data):
         print ("Timeout Error:", errt)
     except requests.exceptions.RequestException as err:
         print ("Something went wrong with the request:", err)
-
     else:
         # If the request was successful, print the status code
         print(response.status_code)
