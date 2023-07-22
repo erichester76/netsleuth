@@ -188,8 +188,25 @@ def update_host(direction,type,ip,mac,vlan):
         if not mac in found:
             found[mac]=1
             location_id = find_obj_by_key('location','name',LOCATION).get('_id')
-            vendor_id = find_obj_by_key('vendor','name',vendor).get('_id')
+
+            vendor_id = find_obj_by_key('vendor','oui',mac_prefix).get('_id')
+            if (!vendor_id) {
+                data = {
+                    "name": vendor,
+                    "oui": mac_prefix,
+                    "location": location_id
+                }
+                vendor_id = send_to_api('vendor', vendor_id, data).get('_id')
+            }
+
             vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
+            if (!vendor_id) {
+                data = {
+                    "name": vlan,
+                }
+                vlan_id = send_to_api('vlan', vlan_id, data).get('_id')
+                }
+
             data = {
                 "ipAddress": ip,
                 "macAddress": mac,
@@ -201,10 +218,7 @@ def update_host(direction,type,ip,mac,vlan):
             }
             hardware_id = find_obj_by_key('hardware','macAddress',mac).get('_id')
             send_to_api('hardware', hardware_id, data)
-            data = {
-                "name": vlan,
-            }
-            send_to_api('vlan', vlan_id, data)
+
  
     if direction == 'src' and type == 'arp':
     
@@ -438,14 +452,28 @@ def handle_packet(packet):
             if flow.detected_protocol.app_protocol == PROTOCOL_UNKNWON: 
                 flow.detected_protocol = nDPI.giveup(flow.ndpi_flow) 
 
+            hardware_id = find_obj_by_key('hardware','ipAddress',aip).get('_id')
+            software_id = find_obj_by_key('software','name',nDPI.protocol_name(flow.detected_protocol)).get('_id')
 
-            sql.execute('''
-                INSERT INTO flows (src, dst, srcport, dstport, protocol, category, count, bytes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (src, dst, srcport, dstport)
-                DO UPDATE SET count = ?, bytes = ?, protocol = ?, category = ?
-            ''', (aip, bip, aport, bport, nDPI.protocol_name(flow.detected_protocol), nDPI.protocol_category_name(flow.detected_protocol), flow.pkts, flow.bytes, flow.pkts, flow.bytes, nDPI.protocol_name(flow.detected_protocol), nDPI.protocol_category_name(flow.detected_protocol)))
-            conn.commit()
+            if (!software_id) {
+                data = {
+                    "name": vendor,
+                    "location": location_id
+                }
+                software_id = send_to_api('software', null, data).get('_id')
+            }
+
+            vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
+            data = {
+                "srcHardware": hardware_id,
+                "vlan": vlan_id,
+                "bytes": flow.bytes,
+                "software": software_id,
+                "category": nDPI.protocol_category_name(flow.detected_protocol)
+            }
+            flow_id = find_obj_by_key('flow','name',k).get('_id')
+            send_to_api('flow', flow_id, data)
+
             alert(srcip,1010,"[NDPI] Detected new flow - {}:{}<->{}:{} Proto: {} Category: {}".format(srcip,srcport,dstip,dstport,nDPI.protocol_name(flow.detected_protocol), nDPI.protocol_category_name(flow.detected_protocol)))
 
         #os detection using tcp syn signatures from p0f
