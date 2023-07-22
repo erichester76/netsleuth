@@ -37,7 +37,7 @@ class Flow(object):
 BASE_API_URL = "https://lionfish-app-4a33x.ondigitalocean.app"
 API_USERNAME = "eric.hester@umbrella.tech"
 API_PASSWORD = "Olsa-Lamp-Fire5"
-LOCATION = '1'
+LOCATION = 'First Location'
 #LOAD PYP0F DB  
 DATABASE.load()
 
@@ -189,9 +189,14 @@ def update_host(direction,type,ip,mac,vlan):
         vendor = vendor_data.get(mac_prefix, "Unknown")
         if not mac in found:
             found[mac]=1
-            #location_id = find_obj_by_key('location','name',LOCATION).get('_id')
+            location_obj = find_obj_by_key('location','name', LOCATION)
             location_id = None
-
+            if location_obj is None:
+                data = {
+                    "name": 'First Location',
+                }
+                location_id = send_to_api('vlan', None, data).get('_id')
+            else: location_id = location.obj.get('_id')
             vendor = find_obj_by_key('vendor','oui',mac_prefix)
             vendor_id = None
             if vendor is None:
@@ -503,7 +508,7 @@ def handle_packet(packet):
 
             alert(srcip,1010,"[NDPI] Detected new flow - {}:{}<->{}:{} Proto: {} Category: {}".format(srcip,srcport,dstip,dstport,nDPI.protocol_name(flow.detected_protocol), nDPI.protocol_category_name(flow.detected_protocol)))
 
-        #os detection using tcp syn signatures from p0f
+        #os detection using tcp syn signatures from p0f (could shift this to nDPI if I could figure it out)
         if is_rfc(srcip) and packet.haslayer(TCP) and packet[TCP].flags.S:
             tcp_result=fingerprint_tcp(packet)
             if tcp_result.match is not None:
@@ -519,6 +524,6 @@ def handle_packet(packet):
 
 
 if __name__ == "__main__":
-    nDPI = NDPI()  # As simple as that. :)
+    nDPI = NDPI() 
     print("Using nDPI {}".format(nDPI.revision))
     sniff(store=False, prn=handle_packet)
