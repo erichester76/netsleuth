@@ -34,10 +34,10 @@ class Flow(object):
 
 
 #API Config
-BASE_API_URL = "https://lionfish-app-4a33x.ondigitalocean.app/"
-API_EMAIL = "eric.hester@umbrella.tech"
+BASE_API_URL = "https://lionfish-app-4a33x.ondigitalocean.app"
+API_USERNAME = "eric.hester@umbrella.tech"
 API_PASSWORD = "Olsa-Lamp-Fire5"
-
+LOCATION = '1'
 #LOAD PYP0F DB  
 DATABASE.load()
 
@@ -190,22 +190,20 @@ def update_host(direction,type,ip,mac,vlan):
             location_id = find_obj_by_key('location','name',LOCATION).get('_id')
 
             vendor_id = find_obj_by_key('vendor','oui',mac_prefix).get('_id')
-            if (!vendor_id) {
+            if vendor_id is None:
                 data = {
                     "name": vendor,
                     "oui": mac_prefix,
                     "location": location_id
                 }
                 vendor_id = send_to_api('vendor', vendor_id, data).get('_id')
-            }
 
             vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
-            if (!vendor_id) {
+            if vlan_id is None:
                 data = {
                     "name": vlan,
                 }
                 vlan_id = send_to_api('vlan', vlan_id, data).get('_id')
-                }
 
             data = {
                 "ipAddress": ip,
@@ -213,7 +211,7 @@ def update_host(direction,type,ip,mac,vlan):
                 "hostName": hostname,
                 "location": location_id,
                 "vendor": vendor_id,
-                "vlan": vlan_id
+                "vlan": vlan_id,
                 "lastSeen": datetime.now
             }
             hardware_id = find_obj_by_key('hardware','macAddress',mac).get('_id')
@@ -325,7 +323,7 @@ def handle_packet(packet):
                 "ipAddress": ip,
                 "macAddress": mac,
                 "hostName": hostname,
-                "type": 'router'
+                "type": 'router',
                 "lastSeen": datetime.now
             }
             hardware_id = find_obj_by_key('hardware','macAddress',mac).get('_id')
@@ -396,8 +394,8 @@ def handle_packet(packet):
         dstip = packet[IP].dst
         dstmac = packet[Ether].dst
 
-        if is_rfc(srcip): update_host('src','ip',srcip,srcmac,vlanid)
-        if is_rfc(dstip): update_host('dest','ip',dstip,dstmac,vlanid)
+        if is_rfc(srcip): update_host('src','ip',srcip,srcmac,vlan)
+        if is_rfc(dstip): update_host('dest','ip',dstip,dstmac,vlan)
 
         proto = ''
         if packet.haslayer(UDP): proto='UDP'
@@ -455,13 +453,12 @@ def handle_packet(packet):
             hardware_id = find_obj_by_key('hardware','ipAddress',aip).get('_id')
             software_id = find_obj_by_key('software','name',nDPI.protocol_name(flow.detected_protocol)).get('_id')
 
-            if (!software_id) {
+            if software_id is None:
                 data = {
                     "name": vendor,
                     "location": location_id
                 }
                 software_id = send_to_api('software', null, data).get('_id')
-            }
 
             vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
             data = {
@@ -486,7 +483,7 @@ def handle_packet(packet):
                     "os": os,
                     "lastSeen": datetime.now
                 }
-                hardware_id = find_obj_by_key('hardware','ipAddress',srcip.get('_id')
+                hardware_id = find_obj_by_key('hardware','ipAddress',srcip).get('_id')
                 send_to_api('hardware', hardware_id, data)
                 alert(srcip,1005,'[IP] discovered os type using p0f'.format(srcip,tcp_result.match.record.label.name))
 
