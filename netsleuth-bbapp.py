@@ -118,9 +118,11 @@ def send_to_api(endpoint, id, data):
         if id is not None:
             # The object exists, so update it with a PUT request
             response = requests.put(f"{url}/{id}", data=json.dumps(data), headers=headers)
+            return response.json()
         else:
             # The object does not exist, so create it with a POST request
             response = requests.post(url, data=json.dumps(data), headers=headers)
+            return response.json()
 
     except requests.exceptions.HTTPError as errh:
         print ("HTTP Error:", errh)
@@ -187,23 +189,28 @@ def update_host(direction,type,ip,mac,vlan):
         vendor = vendor_data.get(mac_prefix, "Unknown")
         if not mac in found:
             found[mac]=1
-            location_id = find_obj_by_key('location','name',LOCATION).get('_id')
+            #location_id = find_obj_by_key('location','name',LOCATION).get('_id')
+            location_id = None
 
-            vendor_id = find_obj_by_key('vendor','oui',mac_prefix).get('_id')
-            if vendor_id is None:
+            vendor = find_obj_by_key('vendor','oui',mac_prefix)
+            vendor_id = None
+            if vendor is None:
                 data = {
                     "name": vendor,
                     "oui": mac_prefix,
                     "location": location_id
                 }
                 vendor_id = send_to_api('vendor', vendor_id, data).get('_id')
+            else: vendor_id = vendor.get('_id')
 
-            vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
-            if vlan_id is None:
+            vlan_obj = find_obj_by_key('vlan','name',vlan).get('_id')
+            vlan_id = None
+            if vlan_obj is None:
                 data = {
                     "name": vlan,
                 }
-                vlan_id = send_to_api('vlan', vlan_id, data).get('_id')
+                vlan_id = send_to_api('vlan', null, data).get('_id')
+            else: vlan_id = vlan_obj.get('_id')
 
             data = {
                 "ipAddress": ip,
@@ -214,7 +221,10 @@ def update_host(direction,type,ip,mac,vlan):
                 "vlan": vlan_id,
                 "lastSeen": datetime.now
             }
-            hardware_id = find_obj_by_key('hardware','macAddress',mac).get('_id')
+            hardware_obj = find_obj_by_key('hardware','macAddress',mac)
+            hardware_id = None
+            if hardware_obj is not None:
+                hardware_id = hardware_obj.get('_id') 
             send_to_api('hardware', hardware_id, data)
 
  
@@ -253,15 +263,17 @@ def handle_packet(packet):
     vlan = 0
     srcip = 0
     dstip = 0
-    mac = packet[Ether].src
 
     if packet.haslayer(Dot1Q):
         vlan = packet[Dot1Q].vlan
-        vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
-        data = {
-           "name": vlan,
-        }
-        send_to_api('vlan', vlan_id, data)
+        vlan_obj = find_obj_by_key('vlan','name',vlan)
+        vlan_id = None
+        if vlan_obj is None:
+            data = {
+                "name": vlan,
+            }
+            vlan_id = send_to_api('vlan', None, data).get('_id')
+        else: vlan_id = vlan_obj.get('_id')
 
     if packet.haslayer(ARP) and packet[ARP].op == 2:
         if packet[Ether].src != packet[ARP].hwsrc:
@@ -269,6 +281,7 @@ def handle_packet(packet):
             alert(srcip,3010,"[ARP] Spoofed ARP packet detected for {}".format(srcip))
 
     if packet.haslayer(ARP) and packet[ARP].op == 1:
+        mac = packet[Ether].src
         srcip = packet[ARP].psrc
         dstip = packet[ARP].pdst
 
@@ -278,6 +291,7 @@ def handle_packet(packet):
 
     elif packet.haslayer(DHCP) and packet[DHCP].options[0][1] == 2:
         
+        mac = packet[Ether].src
         dhcp_options = packet[DHCP].options
         router = ''
         dhcp_server = ''
@@ -329,24 +343,33 @@ def handle_packet(packet):
                 "type": 'router',
                 "lastSeen": datetime.now
             }
-            hardware_id = find_obj_by_key('hardware','macAddress',mac).get('_id')
+            hardware_obj = find_obj_by_key('hardware','macAddress',mac)
+            hardware_id = None
+            if hardware_obj is not None:
+                hardware_id = hardware_obj.get('_id')
             send_to_api('hardware', hardware_id, data)
+            vlan_obj = find_obj_by_key('vlan','name',vlan)
+            vlan_id is None
+            if vlan_obj is not None:
+                vlan_id = vlan_obj.get('_id')  
             data = {
-                "name": vlan,
-                "ipGateway": router
+               "name": vlan,
+               "ipGateway": router
             }
-            vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
             send_to_api('vlan', vlan_id, data)
  
             alert(srcip,1003,'[DHCP] discovered new router '.format(router))
 
         if subnet_mask:
             # find network from subnet mask and ip
+            vlan_obj = find_obj_by_key('vlan','name',vlan)
+            vlan_id is None
+            if vlan_obj is not None:
+                vlan_id = vlan_obj.get('_id')
             data = {
                 "name": vlan,
                 "ipSubnet": subnet
             }
-            vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
             send_to_api('vlan', vlan_id, data)
 
     elif packet.haslayer(DNS) and packet.haslayer(UDP):
@@ -454,14 +477,18 @@ def handle_packet(packet):
                 flow.detected_protocol = nDPI.giveup(flow.ndpi_flow) 
 
             hardware_id = find_obj_by_key('hardware','ipAddress',aip).get('_id')
-            software_id = find_obj_by_key('software','name',nDPI.protocol_name(flow.detected_protocol)).get('_id')
+            software_obj = find_obj_by_key('software','name',nDPI.protocol_name(flow.detected_protocol))
+            software_id = None
+           
 
-            if software_id is None:
+            if software_obj is None:
                 data = {
                     "name": vendor,
                     "location": location_id
                 }
                 software_id = send_to_api('software', null, data).get('_id')
+            else:
+                software_id = software_obj.get('_id')
 
             vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
             data = {
