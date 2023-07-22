@@ -313,7 +313,10 @@ def handle_packet(packet):
                 "hostName": hostname,
                 "lastSeen": datetime.now
             }
-            hardware_id = find_obj_by_key('hardware','macAddress',mac).get('_id')
+            hardware = find_obj_by_key('hardware','macAddress',mac)
+            if hardware is not None:
+                hardware_id = hardware.get('_id')
+            else: hardware_id = None
             send_to_api('hardware', hardware_id, data)
 
             alert(srcip,1006,'[DHCP] discovered new hostname '.format(srcip,hostname))
