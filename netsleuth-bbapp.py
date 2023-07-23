@@ -31,8 +31,6 @@ class Flow(object):
         self.bytes = 0
         self.ndpi_flow = None
 
-
-
 #API Config
 BASE_API_URL = "https://lionfish-app-4a33x.ondigitalocean.app"
 API_USERNAME = "eric.hester@umbrella.tech"
@@ -41,7 +39,7 @@ LOCATION = 'Brookwood'
 location_id = None
 token = None
 
-#LOAD PYP0F DB  
+#Load pyp0F DB  
 DATABASE.load()
 
 #read in mac vendors file for later lookups
@@ -122,7 +120,7 @@ def send_to_api(endpoint, id, data):
         print ("Something went wrong with the request:", err)
 
 
-#timestamps for dampening alerts later in code
+#Timestamps for dampening alerts later in code
 last_alert_timestamps = {}
 
 def alert(ip,event_id,event):
@@ -493,7 +491,7 @@ def handle_packet(packet):
 
             alert(srcip,1010,"[NDPI] Detected new flow - {}:{}<->{}:{} Proto: {} Category: {}".format(srcip,srcport,dstip,dstport,nDPI.protocol_name(flow.detected_protocol), nDPI.protocol_category_name(flow.detected_protocol)))
 
-        #os detection using tcp syn signatures from p0f (could shift this to nDPI if I could figure it out)
+        # OS detection using tcp syn signatures from p0f (could shift this to nDPI if I could figure it out)
         if is_rfc(srcip) and packet.haslayer(TCP) and packet[TCP].flags.S:
             tcp_result=fingerprint_tcp(packet)
             if tcp_result.match is not None:
