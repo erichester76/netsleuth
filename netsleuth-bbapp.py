@@ -37,7 +37,7 @@ class Flow(object):
 BASE_API_URL = "https://lionfish-app-4a33x.ondigitalocean.app"
 API_USERNAME = "eric.hester@umbrella.tech"
 API_PASSWORD = "Olsa-Lamp-Fire5"
-LOCATION = 'First Location'
+LOCATION = 'Brookwood'
 token = None
 
 #LOAD PYP0F DB  
@@ -176,7 +176,7 @@ def update_host(direction,type,ip,mac,vlan):
             location_id = None
             if location_obj is None:
                 data = {
-                    "name": 'First Location',
+                    "name": LOCATION,
                 }
                 location_id = send_to_api('location', None, data).get('_id')
             else: 
@@ -443,7 +443,7 @@ def handle_packet(packet):
             location_obj = find_obj_by_key('location','name', LOCATION)
             if location_obj is None:
                 data = {
-                    "name": 'First Location',
+                    "name": LOCATION,
                 }
                 location_id = send_to_api('location', None, data).get('_id')
             else: location_id = location_obj.get('_id')
