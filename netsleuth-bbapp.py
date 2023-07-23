@@ -38,6 +38,8 @@ BASE_API_URL = "https://lionfish-app-4a33x.ondigitalocean.app"
 API_USERNAME = "eric.hester@umbrella.tech"
 API_PASSWORD = "Olsa-Lamp-Fire5"
 LOCATION = 'First Location'
+token = None
+
 #LOAD PYP0F DB  
 DATABASE.load()
 
@@ -64,27 +66,23 @@ log = logging.getLogger(__name__)
 
 
 def authenticate():
+    global token
     url = f"{BASE_API_URL}/auth/login"
     credentials = {
         "email": API_USERNAME,
-        "password": API_PASSWORD
+        "password": API_PASSWORD,
     }
-    response = requests.post(url, data=json.dumps(credentials))
+    print("Authenticating to API at "+url)
+    response = requests.post(url, json=credentials)
     response.raise_for_status()  # Raise an exception if the authentication fails
     token = response.json().get('token')  # Get the JWT token from the response
-    return token
 
 def find_obj_by_key(endpoint, object_key, object_value):
-    # Authenticate and get the JWT token
-    token = authenticate()
 
-    # Define the URL of your API
+    if token is None: authenticate()
     url = f"{BASE_API_URL}/{endpoint}"
-
-    # Create the headers for your request
     headers = {
-        "Authorization": f"Bearer {token}",  # Use the token in the Authorization header
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {token}"
     }
 
     # Send a GET request to the API to check if the object exists
@@ -92,38 +90,26 @@ def find_obj_by_key(endpoint, object_key, object_value):
     response = requests.get(find_url, headers=headers)
 
     if response.status_code == 200:
-        # The object exists, return its ID
         return response.json()
     elif response.status_code == 404:
-        # The object does not exist, return None
         return None
     else:
-        # An unexpected status code was returned
         response.raise_for_status()
 
 def send_to_api(endpoint, id, data):
-    # Authenticate and get the JWT token
-    token = authenticate()
-
-    # Define the URL of your API
+    
+    if token is None: authenticate()
     url = f"{BASE_API_URL}/{endpoint}"
-
-    # Create the headers for your request
     headers = {
-        "Authorization": f"Bearer {token}",  # Use the token in the Authorization header
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {token}"
     }
 
     try:
         if id is not None:
-            # The object exists, so update it with a PUT request
-            response = requests.put(f"{url}/{id}", data=json.dumps(data), headers=headers)
-            print("sending api call - "+endpoint+" "+json.dumps(data)) 
-            print(response.json())
+            response = requests.post(f"{url}/{id}", json=data, headers=headers)
             return response.json()
         else:
-            # The object does not exist, so create it with a POST request
-            response = requests.post(url, data=json.dumps(data), headers=headers)
+            response = requests.post(url, json=data, headers=headers)
             return response.json()
     except requests.exceptions.HTTPError as errh:
         print ("HTTP Error:", errh)
@@ -133,9 +119,6 @@ def send_to_api(endpoint, id, data):
         print ("Timeout Error:", errt)
     except requests.exceptions.RequestException as err:
         print ("Something went wrong with the request:", err)
-    else:
-        # If the request was successful, print the status code
-        print(response.status_code)
 
 
 #timestamps for dampening alerts later in code
@@ -195,28 +178,31 @@ def update_host(direction,type,ip,mac,vlan):
                 data = {
                     "name": 'First Location',
                 }
-                location_id = send_to_api('vlan', None, data).get('_id')
-            else: location_id = location.obj.get('_id')
-            vendor = find_obj_by_key('vendor','oui',mac_prefix)
+                location_id = send_to_api('location', None, data).get('_id')
+            else: 
+                location_id = location_obj.get('_id')
+
+            vendor_obj = find_obj_by_key('vendor','name',vendor)
             vendor_id = None
-            if vendor is None:
+            if vendor_obj is None:
                 data = {
-                    "name": vendor,
-                    "oui": mac_prefix,
+                    "name": vendor ,
                     "location": location_id
                 }
                 vendor_id = send_to_api('vendor', vendor_id, data).get('_id')
-            else: vendor_id = vendor.get('_id')
+            else: 
+                vendor_id = vendor_obj.get('_id')
 
-            vlan_obj = find_obj_by_key('vlan','name',vlan).get('_id')
+
+            vlan_obj = find_obj_by_key('vlan','name',vlan)
             vlan_id = None
             if vlan_obj is None:
                 data = {
                     "name": vlan,
                 }
-                vlan_id = send_to_api('vlan', null, data).get('_id')
+                vlan_id = send_to_api('vlan', None, data).get('_id')
             else: vlan_id = vlan_obj.get('_id')
-
+            timestamp = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             data = {
                 "ipAddress": ip,
                 "macAddress": mac,
@@ -224,46 +210,16 @@ def update_host(direction,type,ip,mac,vlan):
                 "location": location_id,
                 "vendor": vendor_id,
                 "vlan": vlan_id,
-                "lastSeen": datetime.now
+                "lastSeen": timestamp,
             }
             hardware_obj = find_obj_by_key('hardware','macAddress',mac)
             hardware_id = None
             if hardware_obj is not None:
                 hardware_id = hardware_obj.get('_id') 
-            send_to_api('hardware', hardware_id, data)
+
+            send_to_api('hardware', hardware_id, data).get
 
  
-    if direction == 'src' and type == 'arp':
-    
-        result=sql.fetchone()
-        if result is not None: 
-            total_arp = result[0]
-            total_arp_last_reset = result[1]
-            rate = int(total_arp) / int(current_time - total_arp_last_reset + 1)
-            if rate > 1 and (current_time - total_arp_last_reset) > 60:
-                alert(ip,3001,"[ARP] Possible Scanning Event. ARP requests exceed 1 per second from {}".format(ip))
-                total_arp = 0
-                total_arp_last_reset = current_time
-
-            total_arp = total_arp + 1
-    
-    if direction == 'dest' and type == 'arp':
-    
-        result = sql.fetchone()
-
-        if result is not None: 
-            target_count = result[0]
-            target_count_last_reset = result[1]
-
-            rate = int(target_count) / int(current_time - target_count_last_reset + 1)
-            if rate > 1 and (current_time - target_count_last_reset) > 60:
-                alert(ip,3002,"[ARP] Possible POI. ARP requests exceed 1 per second looking for {}".format(ip))
-                target_count = 0
-                target_count_last_reset = current_time
-
-            target_count = target_count + 1
-
-    
 def handle_packet(packet):
     vlan = 0
     srcip = 0
@@ -481,44 +437,68 @@ def handle_packet(packet):
             if flow.detected_protocol.app_protocol == PROTOCOL_UNKNWON: 
                 flow.detected_protocol = nDPI.giveup(flow.ndpi_flow) 
 
-            hardware_id = find_obj_by_key('hardware','ipAddress',aip).get('_id')
             software_obj = find_obj_by_key('software','name',nDPI.protocol_name(flow.detected_protocol))
             software_id = None
            
-
+            location_obj = find_obj_by_key('location','name', LOCATION)
+            if location_obj is None:
+                data = {
+                    "name": 'First Location',
+                }
+                location_id = send_to_api('location', None, data).get('_id')
+            else: location_id = location_obj.get('_id')
             if software_obj is None:
                 data = {
-                    "name": vendor,
+                    "name": nDPI.protocol_name(flow.detected_protocol),
                     "location": location_id
                 }
-                software_id = send_to_api('software', null, data).get('_id')
+                software_id = send_to_api('software', None, data).get('_id')
             else:
                 software_id = software_obj.get('_id')
 
-            vlan_id = find_obj_by_key('vlan','name',vlan).get('_id')
+            hardware_id = None
+            vlan_id = None
+            vlan_obj = find_obj_by_key('vlan','name',vlan)
+            if vlan_obj is not None:
+               vlan_id =vlan_obj.get('_id')
+            hardware_obj = find_obj_by_key('hardware','ipAddress',aip)
+            if hardware_obj is not None:
+               hardware_id = hardware_obj.get('_id')
+            
             data = {
+                "name": k, 
                 "srcHardware": hardware_id,
                 "vlan": vlan_id,
                 "bytes": flow.bytes,
                 "software": software_id,
                 "category": nDPI.protocol_category_name(flow.detected_protocol)
             }
-            flow_id = find_obj_by_key('flow','name',k).get('_id')
-            send_to_api('flow', flow_id, data)
-
+            flow_obj = find_obj_by_key('flow','name',k)
+            if flow_obj is None: send_to_api('flow', None, data)
+            else: send_to_api('flow', flow_obj.get('_id'), data)
             alert(srcip,1010,"[NDPI] Detected new flow - {}:{}<->{}:{} Proto: {} Category: {}".format(srcip,srcport,dstip,dstport,nDPI.protocol_name(flow.detected_protocol), nDPI.protocol_category_name(flow.detected_protocol)))
 
         #os detection using tcp syn signatures from p0f (could shift this to nDPI if I could figure it out)
         if is_rfc(srcip) and packet.haslayer(TCP) and packet[TCP].flags.S:
             tcp_result=fingerprint_tcp(packet)
+            timestamp = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             if tcp_result.match is not None:
+                hardware_id = None
+                vlan_id = None
+                vlan_obj = find_obj_by_key('vlan','name',vlan)
+                if vlan_obj is not None:
+                   vlan_id =vlan_obj.get('_id')
+                hardware_obj = find_obj_by_key('hardware','ipAddress',aip)
+                if hardware_obj is not None:
+                   hardware_id = hardware_obj.get('_id')
                 data = {
-                    "ipAddress": packet[IP].src,
-                    "macAddress": mac,
-                    "os": os,
-                    "lastSeen": datetime.now
+                    "ipAddress": srcip,
+                    "macAddress": srcmac,
+                    "os": tcp_result.match.record.label.name,
+                    "vlan": vlan_id,
+                    "lastSeen": timestamp,
                 }
-                hardware_id = find_obj_by_key('hardware','ipAddress',srcip).get('_id')
+
                 send_to_api('hardware', hardware_id, data)
                 alert(srcip,1005,'[IP] discovered os type using p0f'.format(srcip,tcp_result.match.record.label.name))
 
