@@ -199,6 +199,7 @@ def update_host(direction,type,ip,mac,vlan):
             if vlan_obj is None:
                 data = {
                     "name": vlan,
+                    "location": location_id,
                 }
                 vlan_id = send_to_api('vlan', None, data).get('_id')
             else: vlan_id = vlan_obj.get('_id')
@@ -225,6 +226,14 @@ def handle_packet(packet):
     srcip = 0
     dstip = 0
 
+    location_obj = find_obj_by_key('location','name', LOCATION)
+    if location_obj is None:
+        data = {
+            "name": LOCATION,
+        }
+        location_id = send_to_api('location', None, data).get('_id')
+    else: location_id = location_obj.get('_id')
+
     if packet.haslayer(Dot1Q):
         vlan = packet[Dot1Q].vlan
         vlan_obj = find_obj_by_key('vlan','name',vlan)
@@ -232,6 +241,8 @@ def handle_packet(packet):
         if vlan_obj is None:
             data = {
                 "name": vlan,
+                "location": location_id,
+
             }
             vlan_id = send_to_api('vlan', None, data).get('_id')
         else: vlan_id = vlan_obj.get('_id')
@@ -440,13 +451,6 @@ def handle_packet(packet):
             software_obj = find_obj_by_key('software','name',nDPI.protocol_name(flow.detected_protocol))
             software_id = None
            
-            location_obj = find_obj_by_key('location','name', LOCATION)
-            if location_obj is None:
-                data = {
-                    "name": LOCATION,
-                }
-                location_id = send_to_api('location', None, data).get('_id')
-            else: location_id = location_obj.get('_id')
             if software_obj is None:
                 data = {
                     "name": nDPI.protocol_name(flow.detected_protocol),
