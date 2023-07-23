@@ -37,7 +37,7 @@ class Flow(object):
 BASE_API_URL = "https://lionfish-app-4a33x.ondigitalocean.app"
 API_USERNAME = "eric.hester@umbrella.tech"
 API_PASSWORD = "Olsa-Lamp-Fire5"
-LOCATION = 'Stark'
+LOCATION = 'Brookwood'
 location_id = None
 token = None
 
@@ -352,7 +352,7 @@ def handle_packet(packet):
                 hostname = hostname.split(".", 1)[0]
                 data = {
                     "ipAddress": packet[IP].src,
-                    "macAddress": mac,
+                    "macAddress": srcmac,
                     "hostName": hostname,
                     "location": location_id,
                     "lastSeen": timestamp
@@ -365,7 +365,7 @@ def handle_packet(packet):
             if packet[UDP].sport == 5353 and packet.haslayer(IP) and packet[DNS].an.type == 16 and 'ipp' in packet[DNS].an.rrname.decode():
                 data = {
                     "ipAddress": packet[IP].src,
-                    "macAddress": mac,
+                    "macAddress": srcmac,
                     "type": 'printer',
                     "lastSeen": timestamp,
                     "location": location_id,
@@ -378,7 +378,7 @@ def handle_packet(packet):
                 hostname = hostname.split(".", 1)[0]
                 data = {
                     "ipAddress": packet[IP].src,
-                    "macAddress": mac,
+                    "macAddress": srcmac,
                     "hostName": hostname,
                     "location": location_id,
                     "lastSeen": timestamp
