@@ -297,6 +297,7 @@ def handle_packet(packet):
                 "ipAddress": ip,
                 "macAddress": mac,
                 "hostName": hostname,
+                "location": location_id,
                 "lastSeen": datetime.now
             }
             hardware = find_obj_by_key('hardware','macAddress',mac)
@@ -312,6 +313,7 @@ def handle_packet(packet):
                 "ipAddress": ip,
                 "macAddress": mac,
                 "hostName": hostname,
+                "location": location_id,
                 "type": 'router',
                 "lastSeen": datetime.now
             }
@@ -356,6 +358,7 @@ def handle_packet(packet):
                     "ipAddress": packet[IP].src,
                     "macAddress": mac,
                     "hostName": hostname,
+                    "location": location_id,
                     "lastSeen": datetime.now
                 }
                 hardware_id = find_obj_by_key('hardware','ipAddress',packet[IP].src).get('_id')
@@ -369,6 +372,7 @@ def handle_packet(packet):
                     "macAddress": mac,
                     "type": 'printer',
                     "lastSeen": datetime.now
+                    "location": location_id,
                 }
                 hardware_id = find_obj_by_key('hardware','ipAddress',packet[IP].src).get('_id')
                 send_to_api('hardware', hardware_id, data)
@@ -380,6 +384,7 @@ def handle_packet(packet):
                     "ipAddress": packet[IP].src,
                     "macAddress": mac,
                     "hostName": hostname,
+                    "location": location_id,
                     "lastSeen": datetime.now
                 }
                 hardware_id = find_obj_by_key('hardware','ipAddress',packet[IP].src).get('_id')
@@ -475,6 +480,7 @@ def handle_packet(packet):
                 "vlan": vlan_id,
                 "bytes": flow.bytes,
                 "software": software_id,
+                "location": location_id,
                 "category": nDPI.protocol_category_name(flow.detected_protocol)
             }
             flow_obj = find_obj_by_key('flow','name',k)
@@ -500,6 +506,7 @@ def handle_packet(packet):
                     "macAddress": srcmac,
                     "os": tcp_result.match.record.label.name,
                     "vlan": vlan_id,
+                    "location": location_id,
                     "lastSeen": timestamp,
                 }
 
