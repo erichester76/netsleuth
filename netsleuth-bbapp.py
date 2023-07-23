@@ -490,6 +490,7 @@ def handle_packet(packet):
             flow_obj = find_obj_by_key('flow','name',k)
             if flow_obj is None: send_to_api('flow', None, data)
             else: send_to_api('flow', flow_obj.get('_id'), data)
+
             alert(srcip,1010,"[NDPI] Detected new flow - {}:{}<->{}:{} Proto: {} Category: {}".format(srcip,srcport,dstip,dstport,nDPI.protocol_name(flow.detected_protocol), nDPI.protocol_category_name(flow.detected_protocol)))
 
         #os detection using tcp syn signatures from p0f (could shift this to nDPI if I could figure it out)
