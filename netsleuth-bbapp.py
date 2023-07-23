@@ -38,16 +38,7 @@ BASE_API_URL = "https://lionfish-app-4a33x.ondigitalocean.app"
 API_USERNAME = "eric.hester@umbrella.tech"
 API_PASSWORD = "Olsa-Lamp-Fire5"
 LOCATION = 'Stark'
-location_obj = find_obj_by_key('location','name', LOCATION)
 location_id = None
-if location_obj is None:
-    data = {
-      "name": LOCATION,
-    }
-    location_id = send_to_api('location', None, data).get('_id')
-else: 
-    location_id = location_obj.get('_id')
-
 token = None
 
 #LOAD PYP0F DB  
@@ -165,6 +156,7 @@ def is_rfc(ip):
         return False
 
 found = {}
+vlanfound = {}
 
 def update_host(direction,type,ip,mac,vlan):
 
@@ -197,16 +189,19 @@ def update_host(direction,type,ip,mac,vlan):
             else: 
                 vendor_id = vendor_obj.get('_id')
 
+            if not vlan in vlanfound:
+                vlan_obj = find_obj_by_key('vlan','name',vlan)
+                vlan_id = None
+                if vlan_obj is None:
+                    data = {
+                        "name": vlan,
+                        "location": location_id,
+                    }
+                    vlan_id = send_to_api('vlan', None, data).get('_id')
+                else: vlan_id = vlan_obj.get('_id')
+                vlanfound[vlan]=vlan_id
+            else: vlan_id = vlanfound[vlan]
 
-            vlan_obj = find_obj_by_key('vlan','name',vlan)
-            vlan_id = None
-            if vlan_obj is None:
-                data = {
-                    "name": vlan,
-                    "location": location_id,
-                }
-                vlan_id = send_to_api('vlan', None, data).get('_id')
-            else: vlan_id = vlan_obj.get('_id')
             data = {
                 "ipAddress": ip,
                 "macAddress": mac,
@@ -235,16 +230,18 @@ def handle_packet(packet):
 
     if packet.haslayer(Dot1Q):
         vlan = packet[Dot1Q].vlan
-        vlan_obj = find_obj_by_key('vlan','name',vlan)
-        vlan_id = None
-        if vlan_obj is None:
-            data = {
-                "name": vlan,
-                "location": location_id,
-
-            }
-            vlan_id = send_to_api('vlan', None, data).get('_id')
-        else: vlan_id = vlan_obj.get('_id')
+        if not vlan in vlanfound:
+            vlan_obj = find_obj_by_key('vlan','name',vlan)
+            vlan_id = None
+            if vlan_obj is None:
+                data = {
+                    "name": vlan,
+                    "location": location_id,
+                }
+                vlan_id = send_to_api('vlan', None, data).get('_id')
+            else: vlan_id = vlan_obj.get('_id')
+            vlanfound[vlan]=vlan_id
+        else: vlan_id = vlanfound[vlan]
 
     if packet.haslayer(ARP) and packet[ARP].op == 2:
         if packet[Ether].src != packet[ARP].hwsrc:
@@ -464,11 +461,19 @@ def handle_packet(packet):
             else:
                 software_id = software_obj.get('_id')
 
+            if not vlan in vlanfound:
+                vlan_obj = find_obj_by_key('vlan','name',vlan)
+                vlan_id = None
+                if vlan_obj is None:
+                    data = {
+                        "name": vlan,
+                        "location": location_id,
+                    }
+                    vlan_id = send_to_api('vlan', None, data).get('_id')
+                else: vlan_id = vlan_obj.get('_id')
+                vlanfound[vlan]=vlan_id
+            else: vlan_id = vlanfound[vlan]
             hardware_id = None
-            vlan_id = None
-            vlan_obj = find_obj_by_key('vlan','name',vlan)
-            if vlan_obj is not None:
-               vlan_id =vlan_obj.get('_id')
             hardware_obj = find_obj_by_key('hardware','ipAddress',aip)
             if hardware_obj is not None:
                hardware_id = hardware_obj.get('_id')
@@ -513,6 +518,15 @@ def handle_packet(packet):
 
 
 if __name__ == "__main__":
+    location_obj = find_obj_by_key('location','name', LOCATION)
+    if location_obj is None:
+        data = {
+           "name": LOCATION,
+        }
+        location_id = send_to_api('location', None, data).get('_id')
+    else:
+        location_id = location_obj.get('_id')
+
     nDPI = NDPI() 
     print("Using nDPI {}".format(nDPI.revision))
     sniff(store=False, prn=handle_packet)
