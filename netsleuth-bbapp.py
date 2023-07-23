@@ -11,6 +11,15 @@ from pyp0f.fingerprint import fingerprint_mtu, fingerprint_tcp, fingerprint_http
 from pyp0f.database import DATABASE
 from collections import namedtuple
 from ndpi import NDPI, NDPIFlow, ffi
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+LOCATION = os.getenv('LOCATION')
+API_USERNAME = os.getenv('API_USERNAME')
+API_PASSWORD = os.getenv('API_PASSWORD')
+BASE_API_URL = os.getenv('BASE_API_URL')
 
 #nDPI config
 FLOW_KEY = "{} {}:{} <-> {}:{}"
@@ -32,10 +41,7 @@ class Flow(object):
         self.ndpi_flow = None
 
 #API Config
-BASE_API_URL = "https://lionfish-app-4a33x.ondigitalocean.app"
-API_USERNAME = "eric.hester@umbrella.tech"
-API_PASSWORD = "Olsa-Lamp-Fire5"
-LOCATION = 'Brookwood'
+
 location_id = None
 token = None
 
