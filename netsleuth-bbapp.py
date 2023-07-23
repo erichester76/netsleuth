@@ -37,7 +37,17 @@ class Flow(object):
 BASE_API_URL = "https://lionfish-app-4a33x.ondigitalocean.app"
 API_USERNAME = "eric.hester@umbrella.tech"
 API_PASSWORD = "Olsa-Lamp-Fire5"
-LOCATION = 'Brookwood'
+LOCATION = 'Stark'
+location_obj = find_obj_by_key('location','name', LOCATION)
+location_id = None
+if location_obj is None:
+    data = {
+      "name": LOCATION,
+    }
+    location_id = send_to_api('location', None, data).get('_id')
+else: 
+    location_id = location_obj.get('_id')
+
 token = None
 
 #LOAD PYP0F DB  
@@ -158,6 +168,8 @@ found = {}
 
 def update_host(direction,type,ip,mac,vlan):
 
+    global location_id
+
     try:
 
         hostname = socket.gethostbyaddr(ip)[0]
@@ -173,15 +185,6 @@ def update_host(direction,type,ip,mac,vlan):
         vendor = vendor_data.get(mac_prefix, "Unknown")
         if not mac in found:
             found[mac]=1
-            location_obj = find_obj_by_key('location','name', LOCATION)
-            location_id = None
-            if location_obj is None:
-                data = {
-                    "name": LOCATION,
-                }
-                location_id = send_to_api('location', None, data).get('_id')
-            else: 
-                location_id = location_obj.get('_id')
 
             vendor_obj = find_obj_by_key('vendor','name',vendor)
             vendor_id = None
@@ -222,18 +225,13 @@ def update_host(direction,type,ip,mac,vlan):
 
  
 def handle_packet(packet):
+
+    global location_id
     vlan = 0
     srcip = 0
     dstip = 0
 
     timestamp = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
-    location_obj = find_obj_by_key('location','name', LOCATION)
-    if location_obj is None:
-        data = {
-            "name": LOCATION,
-        }
-        location_id = send_to_api('location', None, data).get('_id')
-    else: location_id = location_obj.get('_id')
 
     if packet.haslayer(Dot1Q):
         vlan = packet[Dot1Q].vlan
