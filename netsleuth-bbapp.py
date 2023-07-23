@@ -166,6 +166,7 @@ def update_host(direction,type,ip,mac,vlan):
     except socket.herror:
         hostname = "Unknown"
 
+    timestamp = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
     if mac != '' and mac != 'ff:ff:ff:ff:ff:ff':
 
         mac_prefix = mac[:8].upper()
@@ -203,7 +204,6 @@ def update_host(direction,type,ip,mac,vlan):
                 }
                 vlan_id = send_to_api('vlan', None, data).get('_id')
             else: vlan_id = vlan_obj.get('_id')
-            timestamp = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             data = {
                 "ipAddress": ip,
                 "macAddress": mac,
@@ -226,6 +226,7 @@ def handle_packet(packet):
     srcip = 0
     dstip = 0
 
+    timestamp = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
     location_obj = find_obj_by_key('location','name', LOCATION)
     if location_obj is None:
         data = {
@@ -298,7 +299,7 @@ def handle_packet(packet):
                 "macAddress": mac,
                 "hostName": hostname,
                 "location": location_id,
-                "lastSeen": datetime.now
+                "lastSeen": timestamp
             }
             hardware = find_obj_by_key('hardware','macAddress',mac)
             if hardware is not None:
@@ -315,7 +316,7 @@ def handle_packet(packet):
                 "hostName": hostname,
                 "location": location_id,
                 "type": 'router',
-                "lastSeen": datetime.now
+                "lastSeen": timestamp
             }
             hardware_obj = find_obj_by_key('hardware','macAddress',mac)
             hardware_id = None
@@ -359,7 +360,7 @@ def handle_packet(packet):
                     "macAddress": mac,
                     "hostName": hostname,
                     "location": location_id,
-                    "lastSeen": datetime.now
+                    "lastSeen": timestamp
                 }
                 hardware_id = find_obj_by_key('hardware','ipAddress',packet[IP].src).get('_id')
                 send_to_api('hardware', hardware_id, data)
@@ -371,7 +372,7 @@ def handle_packet(packet):
                     "ipAddress": packet[IP].src,
                     "macAddress": mac,
                     "type": 'printer',
-                    "lastSeen": datetime.now
+                    "lastSeen": timestamp,
                     "location": location_id,
                 }
                 hardware_id = find_obj_by_key('hardware','ipAddress',packet[IP].src).get('_id')
@@ -385,7 +386,7 @@ def handle_packet(packet):
                     "macAddress": mac,
                     "hostName": hostname,
                     "location": location_id,
-                    "lastSeen": datetime.now
+                    "lastSeen": timestamp
                 }
                 hardware_id = find_obj_by_key('hardware','ipAddress',packet[IP].src).get('_id')
                 send_to_api('hardware', hardware_id, data)
@@ -491,7 +492,6 @@ def handle_packet(packet):
         #os detection using tcp syn signatures from p0f (could shift this to nDPI if I could figure it out)
         if is_rfc(srcip) and packet.haslayer(TCP) and packet[TCP].flags.S:
             tcp_result=fingerprint_tcp(packet)
-            timestamp = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             if tcp_result.match is not None:
                 hardware_id = None
                 vlan_id = None
