@@ -2,7 +2,6 @@ import scapy.all as scapy
 import pynetbox
 import socket
 import logging
-from mac_vendor_lookup import MacLookup
 from pyp0f.fingerprint import fingerprint_tcp
 from scapy.layers.dhcp import DHCP
 from scapy.layers.mdns import DNS
