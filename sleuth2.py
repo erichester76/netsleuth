@@ -104,6 +104,7 @@ def build_device_record(packet):
             device_data["manufacturer"] = vendor_data.get(mac_prefix_src, "Unknown")
             log.debug(f"Inbound traffic detected. Source MAC: {src_mac}, Vendor: {device_data['manufacturer']}")
         elif dst_mac != scapy.get_if_hwaddr(scapy.conf.iface):  # Outbound traffic
+            break
             device_data["mac_address"] = dst_mac
             device_data["manufacturer"] = vendor_data.get(mac_prefix_dst, "Unknown")
             log.debug(f"Outbound traffic detected. Destination MAC: {dst_mac}, Vendor: {device_data['manufacturer']}")
