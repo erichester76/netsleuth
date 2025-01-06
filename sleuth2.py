@@ -4,7 +4,7 @@ import socket
 import logging
 from pyp0f.fingerprint import fingerprint_tcp
 from scapy.layers.dhcp import DHCP
-from scapy.layers.mdns import DNS
+from scapy.layers.dns import DNS
 from scapy.layers.l2 import ARP, Ether
 from scapy.layers.inet import IP, UDP, TCP
 
