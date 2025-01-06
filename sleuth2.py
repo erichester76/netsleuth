@@ -1,16 +1,13 @@
 import scapy.all as scapy
 import pynetbox
 import socket
+import logging
 from mac_vendor_lookup import MacLookup
-from pyp0f import p0f
+from pyp0f.fingerprint import fingerprint_tcp
 from scapy.layers.dhcp import DHCP
 from scapy.layers.mdns import DNS
-from scapy.layers.l2 import ARP
-from scapy.layers.upnp import UPnP
-from scapy.layers.inet import IP
-from concurrent.futures import ThreadPoolExecutor
-import json
-import threading
+from scapy.layers.l2 import ARP, Ether
+from scapy.layers.inet import IP, UDP, TCP
 
 # NetBox API settings
 NETBOX_API_URL = "http://<netbox_url>/"
@@ -18,173 +15,157 @@ NETBOX_API_TOKEN = "<your_netbox_api_token>"
 
 # Initialize pynetbox API client
 nb = pynetbox.api(NETBOX_API_URL, token=NETBOX_API_TOKEN)
+logging.basicConfig(level=logging.DEBUG)
+log = logging.getLogger(__name__)
 
-def send_to_netbox(data):
+# Get local IP for directionality checks
+local_ip = scapy.get_if_addr(scapy.conf.iface)
+
+vendor_data = {}
+with open('oui.txt', 'r') as file:
+    for line in file:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts = line.split('\t')
+        if len(parts) == 2:
+            mac_prefix = parts[0].upper()
+            vendor = parts[1].upper()
+            vendor_data[mac_prefix] = vendor
+        else:
+            mac_prefix = parts[0].upper()
+            vendor = parts[2].upper()
+            vendor_data[mac_prefix] = vendor
+
+def add_device_to_netbox(device_data):
     """Send inventory data to NetBox."""
     try:
-        print(f"[Debug] Would send to NetBox: {data}")
+        log.debug(f"Attempting to add/update device: {device_data}")
+        existing_device = nb.dcim.devices.get(name=device_data['name'])
+        if existing_device:
+            log.info(f"[NetBox] Updating existing device: {device_data['name']}")
+            existing_device.update(
+                {
+                    "device_role": nb.dcim.device_roles.get(name=device_data['device_role']).id,
+                    "device_type": nb.dcim.device_types.get(model="Generic Device").id,
+                    "site": nb.dcim.sites.get(name="Default Site").id,
+                    "primary_ip4": nb.ipam.ip_addresses.get(address=device_data['primary_ip']).id if device_data['primary_ip'] != "Unknown" else existing_device.primary_ip4,
+                    "mac_address": device_data['mac_address'],
+                    "manufacturer": nb.dcim.manufacturers.get(name=device_data['manufacturer']).id,
+                    "platform": nb.dcim.platforms.get(name=device_data['platform']).id if device_data.get('platform') else existing_device.platform,
+                }
+            )
+            log.debug(f"[NetBox] Device updated: {device_data['name']}")
+        else:
+            nb.dcim.devices.create(
+                name=device_data['name'],
+                device_role=nb.dcim.device_roles.get(name=device_data['device_role']).id,
+                device_type=nb.dcim.device_types.get(model="Generic Device").id,
+                site=nb.dcim.sites.get(name="Default Site").id,
+                primary_ip4=nb.ipam.ip_addresses.create(address=device_data['primary_ip']).id,
+                mac_address=device_data['mac_address'],
+                manufacturer=nb.dcim.manufacturers.get(name=device_data['manufacturer']).id,
+                platform=nb.dcim.platforms.get(name=device_data['platform']).id if device_data.get('platform') else None
+            )
+            log.info(f"[NetBox] Device added: {device_data['name']}")
     except Exception as e:
-        print(f"[Debug] Failed to prepare data for NetBox: {e}")
+        log.error(f"[NetBox] Failed to add/update device: {e}")
 
 def get_hostname(ip):
     """Attempt to resolve the hostname via reverse DNS."""
     try:
-        return socket.gethostbyaddr(ip)[0]
+        hostname = socket.gethostbyaddr(ip)[0]
+        log.debug(f"Resolved hostname for IP {ip}: {hostname}")
+        return hostname
     except socket.herror:
-        return None
+        log.debug(f"Hostname resolution failed for IP {ip}")
+        return "Unknown"
 
-def arping_to_get_mac(ip):
-    """Send ARP request to get the MAC address for the given IP."""
-    try:
-        answered, _ = scapy.arping(ip, verbose=0)
-        for sent, received in answered:
-            return received.hwsrc
-    except Exception as e:
-        print(f"Error in ARPing for IP {ip}: {e}")
-        return None
-
-def create_device_from_dhcp(dhcp_info, mac):
-    """Create a device in NetBox using DHCP attributes."""
-    if not mac and "dhcp_server" in dhcp_info:
-        mac = arping_to_get_mac(dhcp_info["dhcp_server"])
-
-    vendor = MacLookup().lookup(mac) if mac else "Unknown"
-    primary_ip = dhcp_info.get("dhcp_server", "Unknown")
-    device_role = "DHCP Server" if "dhcp_server" in dhcp_info else "Endpoint"
-    hostname = dhcp_info.get("hostname", "DHCP Device")
-
+def build_device_record(packet):
+    """Construct a device record from packet information considering directionality."""
+    log.debug("Building device record from packet...")
     device_data = {
-        "name": hostname,
-        "mac_address": mac,
-        "manufacturer": vendor,
-        "primary_ip": primary_ip,
-        "device_role": device_role,
+        "name": "Unknown",
+        "mac_address": "Unknown",
+        "manufacturer": "Unknown",
+        "primary_ip": "Unknown",
+        "device_role": "Unknown",
+        "platform": None,
     }
-    send_to_netbox(device_data)
 
-    # Create additional devices for other attributes
-    if "router" in dhcp_info:
-        router_mac = arping_to_get_mac(dhcp_info["router"])
-        router_vendor = MacLookup().lookup(router_mac) if router_mac else "Unknown"
-        router_data = {
-            "name": f"Router-{dhcp_info['router']}",
-            "mac_address": router_mac,
-            "manufacturer": router_vendor,
-            "primary_ip": dhcp_info["router"],
-            "device_role": "Router",
-        }
-        send_to_netbox(router_data)
+    if packet.haslayer(Ether):
+        src_mac = packet[Ether].src
+        dst_mac = packet[Ether].dst
+        mac_prefix_src = src_mac[:8].upper()
+        mac_prefix_dst = dst_mac[:8].upper()
 
-    if "dns_servers" in dhcp_info:
-        for dns in dhcp_info["dns_servers"]:
-            dns_mac = arping_to_get_mac(dns)
-            dns_vendor = MacLookup().lookup(dns_mac) if dns_mac else "Unknown"
-            dns_data = {
-                "name": f"DNS-{dns}",
-                "mac_address": dns_mac,
-                "manufacturer": dns_vendor,
-                "primary_ip": dns,
-                "device_role": "DNS Server",
-            }
-            send_to_netbox(dns_data)
+        # Determine directionality
+        if src_mac != scapy.get_if_hwaddr(scapy.conf.iface):  # Inbound traffic
+            device_data["mac_address"] = src_mac
+            device_data["manufacturer"] = vendor_data.get(mac_prefix_src, "Unknown")
+            log.debug(f"Inbound traffic detected. Source MAC: {src_mac}, Vendor: {device_data['manufacturer']}")
+        elif dst_mac != scapy.get_if_hwaddr(scapy.conf.iface):  # Outbound traffic
+            device_data["mac_address"] = dst_mac
+            device_data["manufacturer"] = vendor_data.get(mac_prefix_dst, "Unknown")
+            log.debug(f"Outbound traffic detected. Destination MAC: {dst_mac}, Vendor: {device_data['manufacturer']}")
 
-    if "ntp_servers" in dhcp_info:
-        for ntp in dhcp_info["ntp_servers"]:
-            ntp_mac = arping_to_get_mac(ntp)
-            ntp_vendor = MacLookup().lookup(ntp_mac) if ntp_mac else "Unknown"
-            ntp_data = {
-                "name": f"NTP-{ntp}",
-                "mac_address": ntp_mac,
-                "manufacturer": ntp_vendor,
-                "primary_ip": ntp,
-                "device_role": "NTP Server",
-            }
-            send_to_netbox(ntp_data)
+    if packet.haslayer(IP):
+        src_ip = packet[IP].src
+        dst_ip = packet[IP].dst
+
+        # Determine directionality
+        if src_ip != local_ip:  # Inbound traffic
+            device_data["primary_ip"] = src_ip
+            device_data["name"] = get_hostname(src_ip)
+            log.debug(f"Inbound traffic detected. Source IP: {src_ip}, Hostname: {device_data['name']}")
+        elif dst_ip != local_ip:  # Outbound traffic
+            device_data["primary_ip"] = dst_ip
+            log.debug(f"Outbound traffic detected. Destination IP: {dst_ip}")
+
+    if packet.haslayer(DHCP):
+        for option in packet[DHCP].options:
+            if isinstance(option, tuple):
+                key, value = option
+                if key == 'hostname':
+                    device_data["name"] = value
+                    log.debug(f"DHCP hostname option found: {value}")
+                elif key == 'router':
+                    device_data["device_role"] = "Router"
+                    log.debug(f"DHCP router option found: {value}")
+
+    if packet.haslayer(DNS) and packet[UDP].sport == 5353:
+        for i in range(packet[DNS].ancount):
+            answer = packet[DNS].an[i]
+            if hasattr(answer, "rrname"):
+                device_data["name"] = answer.rrname.decode().split('.')[0]
+                log.debug(f"mDNS query response found: {device_data['name']}")
+
+    if packet.haslayer(TCP) and packet[TCP].flags & 0x02:  # SYN packet
+        tcp_result = fingerprint_tcp(packet)
+        if tcp_result.match:
+            device_data["platform"] = tcp_result.match.record.label.name
+            log.debug(f"OS fingerprint detected: {device_data['platform']}")
+
+    log.debug(f"Device record built: {device_data}")
+    return device_data
 
 def process_packet(packet):
-    """Process captured packets for device information."""
     try:
-        if ARP in packet and packet[ARP].op == 1:  # ARP Request
-            ip = packet[ARP].psrc
-            mac = packet[ARP].hwsrc
-            hostname = get_hostname(ip) or "Unknown"
-            vendor = MacLookup().lookup(mac)
-
-            device_data = {
-                "name": hostname,
-                "mac_address": mac,
-                "manufacturer": vendor,
-                "primary_ip": ip,
-                "device_role": "Server" if vendor in ["VMware", "Microsoft"] else "Endpoint",
-            }
-            send_to_netbox(device_data)
-
-        elif DHCP in packet and packet[DHCP].op == 2:  # DHCP Offer/ACK
-            mac = packet.src  # Source MAC address from the packet
-            dhcp_info = {}
-            for option in packet[DHCP].options:
-                if isinstance(option, tuple):
-                    key = option[0]
-                    value = option[1]
-                    if key == "server_id":
-                        dhcp_info["dhcp_server"] = value
-                    elif key == "hostname":
-                        dhcp_info["hostname"] = value
-                    elif key == "domain":
-                        dhcp_info["domain"] = value
-                    elif key == "router":
-                        dhcp_info["router"] = value
-                    elif key == "name_server":
-                        dhcp_info.setdefault("dns_servers", []).append(value)
-                    elif key == "ntp_server":
-                        dhcp_info.setdefault("ntp_servers", []).append(value)
-
-            if dhcp_info:
-                print(f"DHCP Info: {dhcp_info}")
-                create_device_from_dhcp(dhcp_info, mac)
-
-        elif DNS in packet and packet[DNS].qdcount > 0:  # mDNS/Bonjour
-            mac = packet.src  # Source MAC address from the packet
-            query_name = packet[DNS].qd.qname.decode('utf-8')
-            dns_info = {
-                "query_name": query_name,
-                "query_type": packet[DNS].qd.qtype
-            }
-            print(f"mDNS Query: {dns_info}")
-            vendor = MacLookup().lookup(mac)
-            device_data = {
-                "name": query_name.split('.')[0],
-                "mac_address": mac,
-                "manufacturer": vendor,
-                "primary_ip": packet[IP].src if IP in packet else "Unknown",
-                "device_role": "mDNS Device",
-            }
-            send_to_netbox(device_data)
-
-        elif UPnP in packet:  # UPnP discovery
-            mac = packet.src  # Source MAC address from the packet
-            print("UPnP packet detected.")
-            if IP in packet:
-                vendor = MacLookup().lookup(mac)
-                device_data = {
-                    "name": "UPnP Device",
-                    "mac_address": mac,
-                    "manufacturer": vendor,
-                    "primary_ip": packet[IP].src,
-                    "device_role": "UPnP Device",
-                }
-                send_to_netbox(device_data)
-
-        # Add pyp0f fingerprinting here if applicable
-        # Example: p0f_client = p0f() - requires configuration
-
+        log.debug("Processing packet...")
+        device_data = build_device_record(packet)
+        if device_data.get("name") != "Unknown":
+            add_device_to_netbox(device_data)
+        else:
+            log.info("Packet processed, but no actionable device data found.")
     except Exception as e:
-        print(f"Error processing packet: {e}")
+        log.error(f"Error processing packet: {e}")
 
 def monitor_interfaces():
-    """Start monitoring all network interfaces."""
-    print("Starting packet capture on all interfaces...")
-    scapy.sniff(prn=process_packet, store=False)
+    log.info("Starting packet capture...")
+    try:
+        scapy.sniff(prn=process_packet, store=False)
+    except Exception as e:
+        log.error(f"Error during packet capture: {e}")
 
 if __name__ == "__main__":
     monitor_interfaces()
